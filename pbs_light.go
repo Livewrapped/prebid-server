@@ -2,16 +2,21 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"math/rand"
+	"os"
 	"time"
 
 	"github.com/prebid/prebid-server/config"
 	pbc "github.com/prebid/prebid-server/prebid_cache_client"
 	"github.com/prebid/prebid-server/router"
 	"github.com/prebid/prebid-server/server"
+	"golang.org/x/sys/windows/svc"
 
 	"github.com/golang/glog"
 	"github.com/spf13/viper"
+
+	"github.com/kardianos/osext"
 )
 
 // Holds binary revision string
@@ -28,6 +33,24 @@ func init() {
 }
 
 func main() {
+	const svcName = "prebid-server"
+	path, err := osext.ExecutableFolder()
+	glog.Info(path)
+	os.Chdir(path)
+	isIntSess, err := svc.IsAnInteractiveSession()
+	if err != nil {
+		glog.Fatalf("failed to determine if we are running in an interactive session: %v", err)
+	}
+
+	if !isIntSess {
+		runService(svcName)
+		return
+	}
+
+	exec()
+}
+
+func exec() {
 	v := viper.New()
 	config.SetupViper(v, "pbs")
 	cfg, err := config.New(v)
@@ -51,4 +74,38 @@ func serve(revision string, cfg *config.Configuration) error {
 	server.Listen(cfg, router.NoCache{Handler: corsRouter}, router.Admin(revision), r.MetricsEngine)
 	r.Shutdown()
 	return nil
+}
+
+type myservice struct{}
+
+func (m *myservice) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (ssec bool, errno uint32) {
+	const cmdsAccepted = svc.AcceptStop | svc.AcceptShutdown
+	changes <- svc.Status{State: svc.StartPending}
+	changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
+	exec()
+loop:
+	for {
+		select {
+		case c := <-r:
+			switch c.Cmd {
+			case svc.Stop, svc.Shutdown:
+				break loop
+			}
+		}
+	}
+	changes <- svc.Status{State: svc.StopPending}
+	return
+}
+
+func runService(name string) {
+	var err error
+
+	run := svc.Run
+
+	err = run(name, &myservice{})
+	if err != nil {
+		glog.Error(fmt.Sprintf("%s service failed: %v", name, err))
+		return
+	}
+	glog.Info(fmt.Sprintf("%s service stopped", name))
 }
