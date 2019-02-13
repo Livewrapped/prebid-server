@@ -149,7 +149,6 @@ type rubiSize struct {
 
 var rubiSizeMap = map[rubiSize]int{
 	{w: 468, h: 60}:    1,
-	{w: 728, h: 90}:    2,
 	{w: 728, h: 91}:    2,
 	{w: 120, h: 90}:    5,
 	{w: 120, h: 600}:   8,
